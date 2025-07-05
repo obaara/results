@@ -119,22 +119,78 @@ import os
 import sys
 from pathlib import Path
 
-# Add the src directory to Python path
-current_dir = Path(__file__).parent
-src_dir = current_dir / "src"
-sys.path.insert(0, str(src_dir))
+# Get the directory of this script (deployment/backend/)
+current_script_dir = Path(__file__).parent.resolve()
 
-from src.main import create_app
+# Add the src directory (deployment/backend/src/) to Python path
+backend_src_dir = current_script_dir / "src"
+sys.path.insert(0, str(backend_src_dir))
 
-# Load production environment
+# Set the current working directory to this script's directory (deployment/backend/)
+# This ensures that relative paths (like for SQLite DB) in the app work as expected.
+os.chdir(current_script_dir)
+
+from src.main import create_app # This should now work
+
+# Load production environment variables from .env.production in the current CWD (deployment/backend/)
 from dotenv import load_dotenv
-load_dotenv('.env.production')
+load_dotenv('.env.production') # .env.production is in deployment/backend/
 
-app = create_app('production')
+app = create_app('production') # create_app will look for DB relative to deployment/backend/
+
+# Configure static file serving for frontend
+# frontend_dir is relative to the original location of app.py if it were in deployment/
+# but since app.py is now in deployment/backend/, we need to go up one level for deployment_dir
+deployment_dir = current_script_dir.parent
+frontend_dir = deployment_dir / "frontend"
+
+@app.route('/')
+def serve_frontend():
+    """Serve the main frontend application"""
+    return send_file(frontend_dir / "index.html")
+
+@app.route('/<path:path>')
+def serve_static_files(path):
+    """Serve static frontend files"""
+    try:
+        return send_from_directory(frontend_dir, path)
+    except FileNotFoundError: # More specific exception
+        # If file not found, serve index.html for client-side routing
+        return send_file(frontend_dir / "index.html")
+
+# Add a production info endpoint
+@app.route('/api/production-info')
+def production_info():
+    return {
+        'success': True,
+        'data': {
+            'application': 'Nigerian School Result Portal',
+            'version': '1.0.0',
+            'environment': 'production',
+            # ... (rest of the data is fine)
+        }
+    }
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    # FLASK_ENV from .env.production should be used by create_app
+    # For app.run(debug=...), it's better to rely on app.config.get('DEBUG')
+    # or explicitly set based on FLASK_ENV if create_app doesn't handle it for run.
+    # Defaulting to False for production is safer.
+    debug_mode = os.environ.get('FLASK_ENV', 'production').lower() == 'development'
+
+    print("=" * 60)
+    print("🚀 Nigerian School Result Portal - Production Server")
+    print("=" * 60)
+    print(f"🌐 Server: http://0.0.0.0:{port}")
+    print(f"📱 Frontend: http://localhost:{port} (served from {frontend_dir})")
+    print(f"🔧 API: http://localhost:{port}/api")
+    print(f"💚 Health: http://localhost:{port}/api/health")
+    print(f"🛠️ Debug Mode: {debug_mode}")
+    print(f"💡 CWD for app: {os.getcwd()}")
+    print("=" * 60)
+
+    app.run(host='0.0.0.0', port=port, debug=debug_mode)
 """
         
         with open(self.deployment_dir / "backend" / "app.py", "w") as f:
@@ -152,7 +208,10 @@ if __name__ == '__main__':
 
 echo "🚀 Starting Nigerian School Result Portal..."
 
-# Create virtual environment if it doesn't exist
+# Ensure we are in the directory where this script is located (deployment/)
+cd "$(dirname "$0")"
+
+# Create virtual environment if it doesn't exist (e.g., deployment/venv)
 if [ ! -d "venv" ]; then
     echo "📦 Creating virtual environment..."
     python3 -m venv venv
@@ -162,18 +221,19 @@ fi
 source venv/bin/activate
 
 # Install dependencies
-echo "📥 Installing dependencies..."
-pip install -r requirements.txt
+echo "📥 Installing dependencies from backend/requirements.txt..."
+pip install -r backend/requirements.txt
 
 # Initialize database if needed
-if [ ! -f "school_portal.db" ]; then
+# The database school_portal.db will be created in backend/
+if [ ! -f "backend/school_portal.db" ]; then
     echo "🗄️ Initializing database..."
-    python init_db.py
+    (cd backend && python init_db.py) # Run init_db.py from within the backend directory
 fi
 
 # Start the application
 echo "🌟 Starting application on port ${PORT:-5000}..."
-python app.py
+python backend/app.py # Run app.py from its location within backend/
 """
         
         with open(self.deployment_dir / "start.sh", "w") as f:
